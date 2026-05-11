@@ -1,0 +1,6 @@
+#!/bin/sh
+# cleanup.win -- remove generated files on Windows
+
+rm -f inst/vtk.conf
+# Remove DLLs staged for a shared VTK installation.
+rm -rf inst/vtk-dlls
