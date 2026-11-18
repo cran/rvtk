@@ -4,7 +4,15 @@
 \alias{LdFlags}
 \title{Linker flags for packages linking against VTK}
 \usage{
-LdFlags()
+LdFlags(modules = NULL)
+}
+\arguments{
+\item{modules}{A character vector of VTK module names to link against,
+e.g. \code{c("vtkIOLegacy", "vtkCommonCore")}.  When \code{NULL} (the default) all
+available modules are included.  When non-\code{NULL}, only the requested
+modules are linked, which avoids pulling in object files that reference
+symbols from modules outside the selected set when using the pre-built
+static bundle.}
 }
 \value{
 A single character string of linker flags, written to stdout (so
@@ -26,4 +34,7 @@ to a response file instead.
 }
 \examples{
 flags <- LdFlags()
+}
+\seealso{
+\code{\link[=use_rvtk]{use_rvtk()}}
 }

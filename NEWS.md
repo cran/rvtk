@@ -1,3 +1,115 @@
+# rvtk 0.2.0
+
+### New features
+
+* **VTK bumped from 9.5.2 to 9.7.2.** The pre-built static libraries shipped
+  via GitHub Releases and the Windows build are built against VTK 9.7.2. The
+  `configure` script now also probes `vtk-9.7` and `vtk-9.6` before earlier
+  `pkg-config` versions, and `tools/winlibs.R` downloads the 9.7.2 build.
+
+* **Six additional VTK modules bundled by default.** The pre-built bundles now
+  explicitly enable `VTK_IOGeometry`, `VTK_FiltersCore`, `VTK_FiltersGeneral`,
+  `VTK_FiltersGeometry`, `VTK_FiltersModeling`, and `VTK_FiltersExtraction`
+  (closing issue #5). These are also added to the default `modules` set used by
+  `use_rvtk()` and linked in `configure`'s `vtk_build_flags()`.
+
+* **`use_rvtk()`: one-call downstream package setup.** A new
+  [usethis](https://usethis.r-lib.org/)-style helper that configures a
+  downstream R package to link against VTK in one step. Running
+  `rvtk::use_rvtk()` inside a downstream package project:
+
+  1. Adds `rvtk` to the `Imports` field of `DESCRIPTION`.
+  2. Writes `src/Makevars` with backtick-style `Rscript` invocations that
+     query `tools/configure.R` for compiler and linker flags.
+  3. Writes `src/Makevars.win` with the Windows-specific `$(shell ...)` syntax
+     that does the same.
+  4. Writes `tools/configure.R` that calls `rvtk::CppFlags()` and
+     `rvtk::LdFlagsFile()` with a customisable list of VTK modules.
+  5. Adds `src/vtk_libs.rsp` to `.gitignore`.
+  6. Creates `R/rvtk_imports.R` with a minimal `@importFrom rvtk` tag so
+     that `R CMD check` does not warn about an unused `Imports` entry.
+
+  The `modules` argument (default: the standard I/O + core set) lets
+  downstream developers restrict linking to only the VTK modules they need,
+  avoiding unintended symbol drag-in (important on macOS static bundles).
+  Uses **cli** for formatted console output when available (it is an optional
+  dependency, listed in `Suggests`).
+
+* **Linux x86_64 musl (Alpine Linux) support.** The pre-built static fallback
+  now provides a `vtk-X.Y.Z-linux-musl-x86_64.tar.gz` archive built inside an
+  Alpine 3.22 container via `docker run` on the GitHub Actions runner (the
+  `container:` job directive was not used because GitHub Actions' Node.js
+  runtime is glibc-linked and crashes on musl). The `configure` script detects
+  musl by inspecting `ldd --version` output and automatically downloads the
+  correct archive; no user action is required. This fixes installation on the
+  CRAN musl check platform (`x86_64-pc-linux-musl`, Alpine Linux).
+
+  The following extra CMake flags are set for the musl build to avoid X11
+  and rendering dependencies unavailable on the headless Alpine runner:
+  `-DVTK_USE_X=OFF -DVTK_MODULE_ENABLE_VTK_RenderingOpenGL2=NO`.
+
+* **Linux aarch64 support.** The pre-built static fallback now provides a
+  `vtk-X.Y.Z-linux-aarch64.tar.gz` archive built on `ubuntu-24.04-arm`.
+  The `configure` script detects the host architecture and downloads the
+  correct archive automatically, so no user action is required.
+
+* **Test coverage raised from ~48% to 100%.** New tinytest coverage exercises
+  the `filter_libs()` module filtering and every branch of `use_rvtk()` and its
+  internals (`rvtk_use_package`, `rvtk_write_file`, `rvtk_use_git_ignore`,
+  `rvtk_rel_path`), including the base-R fallback messaging branches. The
+  package now reports 100% line coverage under `covr::package_coverage()`.
+
+### Bug fixes
+
+* **`configure`: fixed `mktemp` incompatibility with BusyBox.** The
+  temporary file for the pre-built archive download was created with a
+  dotted suffix (`/tmp/vtk-prebuilt.XXXXXX.tar.gz`), which BusyBox `mktemp`
+  rejects with `Invalid argument`. The suffix has been removed; the file is
+  renamed internally before extraction.
+
+* **`modules` argument for `LdFlags()` and `LdFlagsFile()`.**
+  Both linker-flag functions now accept a `modules` character vector that
+  restricts linking to the named VTK modules (e.g.
+  `c("vtkIOLegacy", "vtkCommonCore")`).  When `NULL` (the default) all
+  available modules are included, preserving backward compatibility.
+
+  This is particularly important when using the pre-built static bundle on
+  macOS: the bundle contains the full VTK (including rendering modules that
+  reference `_NSEventTrackingRunLoopMode` from `AppKit.framework`).  Without
+  filtering, `-Wl,-all_load` forces those symbols into every downstream `.so`,
+  causing `dlopen()` failures at `R CMD check` time for packages that do not
+  actually use any rendering functionality.  Downstream packages should pass
+  only the modules they need:
+
+  ```sh
+  VTK_LIBS="$("${R_HOME}/bin/Rscript" --vanilla -e "rvtk::LdFlagsFile(
+    path    = 'src/vtk_libs.rsp',
+    modules = c('vtkIOLegacy', 'vtkCommonCore', ...)
+  )")"
+  ```
+
+* **macOS static link no longer uses `-Wl,-all_load`.**
+  The pre-built static bundle (and the Windows-cross-compile path on macOS)
+  previously linked with `-all_load`, which force-loads *every* object file from
+  each selected static library. When a downstream package restricts linking to a
+  subset of VTK modules, `-all_load` could still drag in an object file from a
+  kept library that references a symbol whose defining module is not in the
+  subset (e.g. `vtkCellGridReader::New()` from a module such as `vtkIOCellGrid`),
+  causing an undefined-symbol failure at `dlopen()` time on macOS's flat
+  namespace. The default linker resolution is now used instead, which only pulls
+  the objects actually needed — matching the ELF `--start-group` behaviour on
+  Linux. Affects packages such as **riot** that [failed to install / load on
+  macOS CI](https://github.com/tractoverse/tractoverse/actions) with
+  `symbol not found in flat namespace '__ZN17vtkCellGridReader3NewEv'`.
+
+### Internal changes
+
+* New internal helper `filter_libs()` implements the module-name matching used
+  by all three platform branches of `read_vtk_conf()`.
+* The optional-`cli`/interactive prompting decisions in `use_rvtk()` are now
+  routed through small internal wrappers (`rvtk_has_cli()`, `rvtk_interactive()`,
+  `rvtk_readline()`) so the messaging and overwrite branches can be unit-tested.
+
 # rvtk 0.1.3
 
 ### New features

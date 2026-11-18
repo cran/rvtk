@@ -4,12 +4,19 @@
 \alias{LdFlagsFile}
 \title{Write VTK linker flags to a response file}
 \usage{
-LdFlagsFile(path, os_type = .Platform$OS.type)
+LdFlagsFile(path, modules = NULL, os_type = .Platform$OS.type)
 }
 \arguments{
 \item{path}{Path (relative to the package source root, i.e. where
 \code{configure} runs) to the response file to write on Windows, e.g.
 \code{"src/vtk_libs.rsp"}.  Ignored on non-Windows platforms.}
+
+\item{modules}{A character vector of VTK module names to link against,
+e.g. \code{c("vtkIOLegacy", "vtkCommonCore")}.  When \code{NULL} (the default) all
+available modules are included.  When non-\code{NULL}, only the requested
+modules are linked, which avoids pulling in object files that reference
+symbols from modules outside the selected set when using the pre-built
+static bundle.}
 
 \item{os_type}{A string identifying the operating-system type, defaulting to
 \code{.Platform$OS.type}.  Override to \code{"windows"} or \code{"unix"} in tests to
@@ -46,4 +53,7 @@ no file is written and the raw flags are returned directly.
 \examples{
 rsp <- file.path(tempdir(), "vtk_libs.rsp")
 ref <- LdFlagsFile(rsp)
+}
+\seealso{
+\code{\link[=use_rvtk]{use_rvtk()}}
 }

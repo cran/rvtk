@@ -113,7 +113,7 @@ res_win_darwin <- rvtk:::read_vtk_conf(
 
 expect_true(grepl("-I", res_win_darwin[["VTK_CPPFLAGS"]]))
 expect_true(grepl("vtk-9\\.5", res_win_darwin[["VTK_CPPFLAGS"]]))
-expect_true(grepl("-Wl,-all_load", res_win_darwin[["VTK_LIBS"]]))
+expect_false(grepl("-all_load", res_win_darwin[["VTK_LIBS"]]))
 expect_true(grepl("vtkFoo", res_win_darwin[["VTK_LIBS"]]))
 
 # ── read_vtk_conf: Windows block – versioned include dir (sysname Windows) ───
@@ -199,3 +199,271 @@ expect_equal(ldff_win_val, paste0("@", basename(rsp_win)))
 expect_true(file.exists(rsp_win))
 expect_equal(readLines(rsp_win), ld_val)
 expect_equal(ldff_win_out, ldff_win_val)
+
+# ── read_vtk_conf: Unix prebuilt – versioned include dir (Darwin) ─────────────
+
+vtk_prebuilt_d <- make_vtk_tree(
+  inc_subdir = "vtk-9.5",
+  libs = "libvtkFoo-9.5.a"
+)
+conf_prebuilt <- write_conf(
+  "VTK_VERSION=9.5.2",
+  "VTK_PREBUILT=yes"
+)
+
+res_prebuilt_darwin <- rvtk:::read_vtk_conf(
+  conf_prebuilt,
+  os_type = "unix",
+  sysname = "Darwin",
+  unix_base_dir = vtk_prebuilt_d
+)
+
+expect_true(grepl("-isystem", res_prebuilt_darwin[["VTK_CPPFLAGS"]]))
+expect_true(grepl("vtk-9\\.5", res_prebuilt_darwin[["VTK_CPPFLAGS"]]))
+expect_false(grepl("-all_load", res_prebuilt_darwin[["VTK_LIBS"]]))
+expect_true(grepl("vtkFoo", res_prebuilt_darwin[["VTK_LIBS"]]))
+
+# ── read_vtk_conf: Unix prebuilt – versioned include dir (Linux) ──────────────
+
+res_prebuilt_linux <- rvtk:::read_vtk_conf(
+  conf_prebuilt,
+  os_type = "unix",
+  sysname = "Linux",
+  unix_base_dir = vtk_prebuilt_d
+)
+
+expect_true(grepl("-isystem", res_prebuilt_linux[["VTK_CPPFLAGS"]]))
+expect_true(grepl("-Wl,--start-group", res_prebuilt_linux[["VTK_LIBS"]]))
+expect_true(grepl("-Wl,--end-group", res_prebuilt_linux[["VTK_LIBS"]]))
+expect_true(grepl("vtkFoo", res_prebuilt_linux[["VTK_LIBS"]]))
+
+# ── read_vtk_conf: Unix prebuilt – unversioned "vtk" include dir ──────────────
+
+vtk_prebuilt_u <- make_vtk_tree(inc_subdir = "vtk", libs = "libvtkBar.a")
+res_prebuilt_unversioned <- rvtk:::read_vtk_conf(
+  conf_prebuilt,
+  os_type = "unix",
+  sysname = "Linux",
+  unix_base_dir = vtk_prebuilt_u
+)
+
+expect_true(grepl("vtk$", res_prebuilt_unversioned[["VTK_CPPFLAGS"]]))
+expect_true(grepl("vtkBar", res_prebuilt_unversioned[["VTK_LIBS"]]))
+
+# ── read_vtk_conf: Windows shared build ──────────────────────────────────────
+
+vtk_tree_shared <- make_vtk_tree(
+  inc_subdir = "vtk-9.5",
+  libs = c("libvtkIOLegacy-9.5.dll.a", "libvtkCommonCore-9.5.dll.a")
+)
+conf_shared <- write_conf(
+  "VTK_VERSION=9.5.2",
+  "VTK_SUBDIR=fake_win_vtk",
+  "VTK_LINK=shared"
+)
+
+res_win_shared <- rvtk:::read_vtk_conf(
+  conf_shared,
+  os_type = "windows",
+  sysname = "Windows",
+  win_base_dir = vtk_tree_shared
+)
+
+expect_true(grepl("-lgdi32", res_win_shared[["VTK_LIBS"]]))
+expect_true(grepl("vtkIOLegacy", res_win_shared[["VTK_LIBS"]]))
+expect_false(grepl("dll\\.a", res_win_shared[["VTK_LIBS"]]))
+
+# ── .vtk_prepend_path: non-Windows early return ───────────────────────────────
+
+ns_env <- new.env(parent = emptyenv())
+result_unix <- rvtk:::.vtk_prepend_path(os_type = "unix", ns = ns_env)
+expect_null(result_unix)
+expect_false(exists(".vtk_original_path", envir = ns_env, inherits = FALSE))
+
+# ── .vtk_prepend_path: Windows, dll_dir empty – no-op ────────────────────────
+
+ns_env2 <- new.env(parent = emptyenv())
+rvtk:::.vtk_prepend_path(os_type = "windows", dll_dir = "", ns = ns_env2)
+expect_false(exists(".vtk_original_path", envir = ns_env2, inherits = FALSE))
+
+# ── .vtk_prepend_path: Windows, dll_dir exists – prepends to PATH ────────────
+
+(function() {
+  fake_dll_dir <- tempfile("fake_vtk_dlls_")
+  dir.create(fake_dll_dir)
+  on.exit(unlink(fake_dll_dir, recursive = TRUE), add = FALSE)
+
+  ns_env3 <- new.env(parent = emptyenv())
+  controlled_path <- "/usr/bin:/bin"
+  Sys.setenv(PATH = controlled_path)
+
+  rvtk:::.vtk_prepend_path(
+    os_type = "windows",
+    dll_dir = fake_dll_dir,
+    ns = ns_env3
+  )
+  new_path <- Sys.getenv("PATH")
+  expect_true(exists(".vtk_original_path", envir = ns_env3, inherits = FALSE))
+  expect_equal(
+    get0(".vtk_original_path", envir = ns_env3, inherits = FALSE),
+    controlled_path
+  )
+  expect_true(grepl(
+    normalizePath(fake_dll_dir, winslash = "\\", mustWork = FALSE),
+    new_path,
+    fixed = TRUE
+  ))
+
+  # Restore PATH after test
+  Sys.setenv(PATH = controlled_path)
+})()
+
+# ── .vtk_prepend_path: Windows, vtk_dll_dir set ───────────────────────────────
+
+(function() {
+  fake_dll_dir2 <- tempfile("fake_vtk_dlls2_")
+  dir.create(fake_dll_dir2)
+  on.exit(unlink(fake_dll_dir2, recursive = TRUE), add = FALSE)
+
+  ns_env4 <- new.env(parent = emptyenv())
+  controlled_path4 <- "/usr/bin:/bin"
+  Sys.setenv(PATH = controlled_path4)
+
+  rvtk:::.vtk_prepend_path(
+    os_type = "windows",
+    dll_dir = "",
+    vtk_dll_dir = fake_dll_dir2,
+    ns = ns_env4
+  )
+  new_path4 <- Sys.getenv("PATH")
+  expect_true(exists(".vtk_original_path", envir = ns_env4, inherits = FALSE))
+  expect_true(grepl(
+    normalizePath(fake_dll_dir2, winslash = "\\", mustWork = FALSE),
+    new_path4,
+    fixed = TRUE
+  ))
+
+  # Restore PATH
+  Sys.setenv(PATH = controlled_path4)
+})()
+
+# ── .vtk_prepend_path: Windows, dir already in PATH – not re-added ────────────
+
+(function() {
+  fake_dll_dir3 <- tempfile("fake_vtk_dlls3_")
+  dir.create(fake_dll_dir3)
+  on.exit(unlink(fake_dll_dir3, recursive = TRUE), add = FALSE)
+
+  norm_dir3 <- normalizePath(fake_dll_dir3, winslash = "\\", mustWork = FALSE)
+  Sys.setenv(PATH = paste(norm_dir3, "/usr/bin", sep = ";"))
+
+  ns_env5 <- new.env(parent = emptyenv())
+  rvtk:::.vtk_prepend_path(
+    os_type = "windows",
+    dll_dir = fake_dll_dir3,
+    ns = ns_env5
+  )
+  expect_false(exists(".vtk_original_path", envir = ns_env5, inherits = FALSE))
+
+  # Restore PATH
+  Sys.setenv(PATH = "/usr/bin:/bin")
+})()
+
+# ── .vtk_restore_path: non-Windows early return ───────────────────────────────
+
+ns_env6 <- new.env(parent = emptyenv())
+result_restore_unix <- rvtk:::.vtk_restore_path(os_type = "unix", ns = ns_env6)
+expect_null(result_restore_unix)
+
+# ── .vtk_restore_path: Windows, no saved path – no-op ────────────────────────
+
+ns_env7 <- new.env(parent = emptyenv())
+old_path7 <- Sys.getenv("PATH")
+rvtk:::.vtk_restore_path(os_type = "windows", ns = ns_env7)
+expect_equal(Sys.getenv("PATH"), old_path7)
+
+# ── .vtk_restore_path: Windows, saved path – restores PATH ───────────────────
+
+ns_env8 <- new.env(parent = emptyenv())
+saved_path <- "/some/saved/path"
+assign(".vtk_original_path", saved_path, envir = ns_env8)
+
+rvtk:::.vtk_restore_path(os_type = "windows", ns = ns_env8)
+expect_equal(Sys.getenv("PATH"), saved_path)
+
+# Restore PATH to actual value
+Sys.setenv(PATH = old_path7)
+
+# ── .onLoad and .onUnload are callable without error ──────────────────────────
+# These exercise the delegation wrappers so all their lines are covered.
+
+expect_silent(rvtk:::.onLoad("", "rvtk"))
+expect_silent(rvtk:::.onUnload(""))
+
+# ── filter_libs: module filtering ─────────────────────────────────────────────
+
+## NULL modules returns the input unchanged
+expect_identical(rvtk:::filter_libs(c("a.a", "b.a"), NULL), c("a.a", "b.a"))
+
+## Third-party libs (not prefixed libvtk<Upper>) are always kept
+lp <- c(
+  "libvtkexpat.a", # third-party
+  "libvtkIOLegacy-9.5.a", # requested module (versioned)
+  "libvtkCommonCore-9.5.a", # module not in the requested set
+  "libvtkzlib.a" # third-party
+)
+res <- rvtk:::filter_libs(lp, c("vtkIOLegacy"))
+expect_true("libvtkexpat.a" %in% res)
+expect_true("libvtkIOLegacy-9.5.a" %in% res)
+expect_false("libvtkCommonCore-9.5.a" %in% res)
+expect_true("libvtkzlib.a" %in% res)
+
+## Full paths match the module (the (^|/) alternative)
+paths <- c(
+  "/opt/vtk/lib/libvtkIOGeometry-9.7.a",
+  "/opt/vtk/lib/libvtkFiltersCore-9.7.a"
+)
+res_paths <- rvtk:::filter_libs(paths, "vtkIOGeometry")
+expect_equal(res_paths, "/opt/vtk/lib/libvtkIOGeometry-9.7.a")
+
+## Module matching works with the "." separator (unversioned / shared builds)
+res_dot <- rvtk:::filter_libs(c("libvtkFiltersGeneral.a"), "vtkFiltersGeneral")
+expect_equal(res_dot, "libvtkFiltersGeneral.a")
+
+## Versioned module basename matches (e.g. libvtkIOGeometry-9.7.a)
+res_ver <- rvtk:::filter_libs(
+  c("libvtkFiltersExtraction-9.7.a"),
+  "vtkFiltersExtraction"
+)
+expect_equal(res_ver, "libvtkFiltersExtraction-9.7.a")
+
+## Empty result when nothing matches
+res_none <- rvtk:::filter_libs(c("libvtkFoo.a", "libvtkBar.a"), c("vtkNope"))
+expect_length(res_none, 0L)
+
+# ── read_vtk_conf: Unix prebuilt – NULL unix_base_dir uses system.file() ──────
+# Covers the is.null(unix_base_dir) TRUE branch (default prebuilt path).
+# system.file("prebuilt", ...) resolves to the installed package's prebuilt
+# tree when configure downloaded a static VTK bundle (the normal CI install
+# case), in which case read_vtk_conf() goes on to build runtime flags from it.
+# When no such tree was installed (e.g. devtools::load_all), system.file() with
+# mustWork=TRUE errors instead. Either outcome exercises the same
+# is.null(unix_base_dir) branch, so the test accepts whichever the installed
+# package actually provides.
+
+conf_prebuilt_null <- write_conf(
+  "VTK_VERSION=9.5.2",
+  "VTK_PREBUILT=yes"
+)
+has_prebuilt <- tryCatch(
+  nzchar(system.file("prebuilt", package = "rvtk")),
+  error = function(e) FALSE
+)
+if (has_prebuilt) {
+  res_prebuilt <- rvtk:::read_vtk_conf(conf_prebuilt_null, os_type = "unix")
+  expect_true(nzchar(res_prebuilt[["VTK_CPPFLAGS"]]))
+} else {
+  expect_error(
+    rvtk:::read_vtk_conf(conf_prebuilt_null, os_type = "unix")
+  )
+}

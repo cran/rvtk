@@ -34,6 +34,12 @@ vtk_build_flags() {
     vtk_libs="${vtk_libs} -lvtkIOXML${_s}"
     vtk_libs="${vtk_libs} -lvtkIOXMLParser${_s}"
     vtk_libs="${vtk_libs} -lvtkIOCore${_s}"
+    vtk_libs="${vtk_libs} -lvtkIOGeometry${_s}"
+    vtk_libs="${vtk_libs} -lvtkFiltersCore${_s}"
+    vtk_libs="${vtk_libs} -lvtkFiltersGeneral${_s}"
+    vtk_libs="${vtk_libs} -lvtkFiltersGeometry${_s}"
+    vtk_libs="${vtk_libs} -lvtkFiltersModeling${_s}"
+    vtk_libs="${vtk_libs} -lvtkFiltersExtraction${_s}"
     vtk_libs="${vtk_libs} -lvtkCommonCore${_s}"
     vtk_libs="${vtk_libs} -lvtkCommonDataModel${_s}"
     vtk_libs="${vtk_libs} -lvtkCommonExecutionModel${_s}"
@@ -87,7 +93,7 @@ fi
 if test "${vtk_found}" = "no"; then
     if command -v pkg-config > /dev/null 2>&1; then
         vtk_pc=""
-        for _n in vtk vtk-9.5 vtk-9.4 vtk-9.3 vtk-9.2 vtk-9.1 vtk9 VTK; do
+        for _n in vtk vtk-9.7 vtk-9.6 vtk-9.5 vtk-9.4 vtk-9.3 vtk-9.2 vtk-9.1 vtk9 VTK; do
             if pkg-config --exists "${_n}" 2>/dev/null; then
                 vtk_pc="${_n}"; break
             fi
@@ -124,7 +130,7 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Fallback: download pre-built static libraries from GitHub releases
 # ---------------------------------------------------------------------------
-VTK_PREBUILT_VERSION="9.5.2"
+VTK_PREBUILT_VERSION="9.7.2"
 VTK_PREBUILT_BASE_URL="https://github.com/astamm/rvtk/releases/download/v${VTK_PREBUILT_VERSION}"
 
 if test "${vtk_found}" = "no"; then
@@ -143,8 +149,21 @@ if test "${vtk_found}" = "no"; then
                     exit 1 ;;
             esac ;;
         Linux)
+            # Detect musl libc (Alpine Linux and similar).  getconf
+            # GNU_LIBC_VERSION is the POSIX-portable probe: it prints
+            # "glibc x.y" on glibc systems and fails on musl (busybox).
+            _libc="glibc"
+            if ! getconf GNU_LIBC_VERSION > /dev/null 2>&1; then
+                _libc="musl"
+            fi
             case "${_arch}" in
-                x86_64) _tarball="vtk-${VTK_PREBUILT_VERSION}-linux-x86_64.tar.gz" ;;
+                x86_64)
+                    if test "${_libc}" = "musl"; then
+                        _tarball="vtk-${VTK_PREBUILT_VERSION}-linux-musl-x86_64.tar.gz"
+                    else
+                        _tarball="vtk-${VTK_PREBUILT_VERSION}-linux-x86_64.tar.gz"
+                    fi ;;
+                aarch64) _tarball="vtk-${VTK_PREBUILT_VERSION}-linux-aarch64.tar.gz" ;;
                 *)
                     echo "ERROR: Unsupported Linux architecture '${_arch}'." >&2
                     exit 1 ;;
@@ -165,7 +184,7 @@ if test "${vtk_found}" = "no"; then
 
     echo "  Downloading ${_url} ..."
     mkdir -p "${_prebuilt_dir}"
-    _tmp="$(mktemp /tmp/vtk-prebuilt.XXXXXX.tar.gz)"
+    _tmp="$(mktemp /tmp/vtk-prebuilt.XXXXXX)"
 
     if command -v curl > /dev/null 2>&1; then
         curl -fsSL "${_url}" -o "${_tmp}" || {
